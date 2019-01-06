@@ -1,0 +1,384 @@
+---
+title: "German Credit Data"
+author: "Rohit Bhaya"
+output: 
+  html_document:
+    theme: flatly
+    highlight: haddock
+    keep_md: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## German Credit Data Risk Analysis
+
+The German credit scoring data is a dataset provided by Prof. Hogmann in the file german.data. The data set has information about 1000 individuals, on the basis of which they have been classified as risky or not. The variable response in the dataset corresponds to the risk label, 1 has been classified as bad and 2 has been classified as good.
+
+Initially, exploratory data analysis on the dataset has been performed. Further, a logistic regression model has been built to predict customers as risky or not, along with variable selection for the model building process.
+
+
+## Libraries Used
+
+The following libraries have been used for the analyses:
+
+```{r message = FALSE, warning = FALSE, results = "hide"}
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(RColorBrewer)
+library(GGally)
+library(ggplot2)
+library(caret)
+library(glmnet)
+library(boot)
+library(verification)
+```
+
+## Exploratory Data Analysis
+
+### Data Import
+The data is downloaded from the link. Further, column names are put and the response labels changed to 1 and 0:
+0 corresponding to a good credit record and 1 corresponding to a bad one (positive class).
+
+```{r message = FALSE, warning = FALSE}
+german_credit <- read.table("http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data")
+
+colnames(german_credit) <- c("chk_acct", "duration", "credit_his", "purpose", 
+                            "amount", "saving_acct", "present_emp", "installment_rate", "sex", "other_debtor", 
+                            "present_resid", "property", "age", "other_install", "housing", "n_credits", 
+                            "job", "n_people", "telephone", "foreign", "response")
+
+german_credit$response <- german_credit$response - 1
+german_credit$response <- as.factor(german_credit$response)
+
+```
+
+### Data Structure
+
+There are a total of 21 attributes in the dataset. Their descriptions and details have been tabulated below:
+
+* Status of existing checking account.
+* Duration in month
+* Credit history
+* Purpose
+* Credit amount
+* Savings account/bonds
+* Present employment since
+* Installment rate in percentage of disposable income
+* Personal status and sex
+* Other debtors / guarantors
+* Present residence since
+* Property
+* Age in years
+* Other installment plans
+* Housing
+* Number of existing credits at this bank
+* Job
+* Number of people being liable to provide maintenance for
+* Telephone
+* Foreign worker
+
+```{r message = FALSE, warning = FALSE}
+glimpse(german_credit)
+```
+
+### Summary Statistics
+
+The following table provides the summary statistics of the dataset. The dataset has a total of 1000 observations with 21 variables, out of which 8 are numerical variables including the response and 13 are categorical variables with various levels. The summary statistics for the variables are presented below -
+
+```{r message = FALSE, warning = FALSE}
+summary(german_credit)
+```
+
+
+### EDA for continuous variables
+
+The following insights is obtained from the EDA of continuous variables:
+
+* From the `age` variable, we see that the median value for bad records is lesser than that of good records, it might be premature to say young people tend to have bad credit records, but we can safely assume it tends to be riskier.
+
+* The `installment_rate` variable has a great deal of difference between the good and bad records, we see that bad records have almost the double median value than good ones.
+
+* The median value and the range of the `duration` variable appears to be on the higher side of bad records as compared to good records
+    
+* For the `amount` variable, we observe that the amount for bad records is larger in general as compared to good ones
+
+* We further built on this by plotting the density curve along the vertical line for their mean value and find that there is a great deal of difference for the `duration` as well as `amount` variable.
+
+
+#### `Duration` variable
+```{r message = FALSE, warning = FALSE}
+amount.mean <- german_credit %>% dplyr::select(amount, response) %>% group_by(response) %>% summarise(m =mean(amount))
+duration.mean <- german_credit %>% dplyr::select(duration, response) %>%group_by(response) %>% summarise( m =mean(duration))
+
+ggplot(german_credit, aes(duration, fill=response)) + 
+  geom_density(alpha=.5) + geom_vline(data=duration.mean, aes(xintercept=m,  colour=response),
+                                      linetype="dashed", size=1)
+
+```
+
+```{r message = FALSE, warning = FALSE}
+test.m <- german_credit[,c(2,5,8,13,16,18,21)]
+test.m$response <- as.numeric(test.m$response)
+ggplot(melt(german_credit[,c(2,21)]), aes(x = variable, y = value, fill = response)) + geom_boxplot() + xlab("response") + ylab("duration")
+```
+
+
+#### `Installment Rate` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(factor(installment_rate), ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") + xlab("Installment Rates")
+```
+
+#### `Amount` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(amount, fill=response)) + 
+  geom_density(alpha=.5) + geom_vline(data=amount.mean, aes(xintercept=m,  colour=response),
+                                      linetype="dashed", size=1)
+ggplot(melt(german_credit[,c(5,21)]), aes(x = variable, y = value, fill = response)) + 
+geom_boxplot() + xlab("response") + ylab("amount")
+```
+
+#### `Age` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(melt(german_credit[,c(13,21)]), aes(x = variable, y = value, fill = response)) + 
+geom_boxplot()+ xlab("response") + ylab("age")
+```
+
+#### `n_credits` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(melt(german_credit[,c(16,21)]), aes(x = variable, y = value, fill = response)) + 
+geom_boxplot()
+```
+
+
+### EDA for categorical variables
+The following insights are derived from EDA of categorical variables:
+
+* For `chk_acct` we see that, the current status of the checking account matters as the frequency of the response variables is seen to differ from one sub category to another, overall A11 houses more number of bad credit records and A14 the least
+
+* For `credit_his`, we observe that proportion of the response variable varies significantly, for categories A30, A31 we see the number of bad credit records are greater.
+
+* For the `purpose` variable, we observe that the proportion of good and bad credit record varies also overall A44, A45, A410 and A46 seem to include more risky records.
+
+* We also observe these trends in other variables like `sex`, `other_debtor`, `saving_acct`, `other_install` and `foreign`. Overall, the trend looks significant in `saving_acct`, `purpose`, `credit_his` and `chk_acct` as compared to others.
+
+#### `chk_acct` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(chk_acct, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") 
+```
+
+#### `credit_his` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(credit_his, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") 
+```
+
+#### `purpose` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(purpose, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") 
+```
+
+#### `saving_acct` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(saving_acct, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge")
+```
+
+#### `other_debtor` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(other_debtor, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge")
+```
+
+#### `sex` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(sex, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") 
+```
+
+#### `other_install` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(other_install, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge") 
+```
+
+#### `foreign` variable
+```{r message = FALSE, warning = FALSE}
+ggplot(german_credit, aes(foreign, ..count..)) + 
+  geom_bar(aes(fill = response), position = "dodge")
+```
+
+
+## Logistic Regression to Predict Riskiness
+
+A logistic regression model is built to predict riskiness
+
+### Train/Test split
+
+Splitting the data into 80:20, train test split using stratifiesd sampling in order to get equal amount of data from each response class
+```{r message = FALSE, warning = FALSE}
+set.seed(12420246)
+in.train <- createDataPartition(as.factor(german_credit$response), p=0.8, list=FALSE)
+german_credit.train <- german_credit[in.train,]
+german_credit.test <- german_credit[-in.train,]
+```
+
+### Stepwise variable selection using AIC
+
+From stepwise variable selection method using AIC, the significant variables are:
+
+* chk_acct
+* duration
+* credit_his
+* purpose
+* amount
+* saving_acct
+* installment_rate
+* sex
+* other_debtor
+* telephone
+* present_emp
+* foreign
+
+```{r message = FALSE, warning = FALSE, results = "hide"}
+credit.glm0 <- glm(response ~ ., family = binomial, german_credit.train)
+credit.glm.step <- step(credit.glm0, direction = "backward")
+```
+```{r message = FALSE, warning = FALSE}
+summary(credit.glm.step)
+```
+
+### Stepwise variable selection using BIC
+
+From stepwise variable selection method using BIC, the significant variables are:
+
+* chk_acct
+* credit_his
+* amount
+* duration
+
+```{r message = FALSE, warning = FALSE, results = "hide"}
+credit.glm.step.bic <- step(credit.glm0, k = log(nrow(german_credit.train)))
+```
+
+```{r message = FALSE, warning = FALSE}
+summary(credit.glm.step.bic)
+```
+
+### Lasso variable selection
+
+To get variable selection using LASSO, the dataset is converted into a matrix form.
+
+```{r message = FALSE, warning = FALSE}
+factor_var <- c(1,3,4,6,7,9,10,12,14,15,17,19,20,21)
+num_var <- c(2,5,8,11,13,16,18)
+train2 <- german_credit.train
+train2[num_var] <- scale(train2[num_var])
+train2[factor_var] <- sapply(train2[factor_var] , as.numeric)
+
+X.train <- as.matrix(train2[,1:20])
+Y.train <- as.matrix(train2[,21])
+```
+
+We fit the LASSO model to our data. From the plot below, we see that as the value of lambda keeps on increasing, the coefficients for the variables tend to 0.
+```{r message = FALSE, warning = FALSE}
+lasso.fit<- glmnet(x=X.train, y=Y.train, family = "binomial", alpha = 1)
+plot(lasso.fit, xvar = "lambda", label=TRUE)
+```
+
+Using cross validation to find perfect lambda value
+
+```{r message = FALSE, warning = FALSE}
+cv.lasso<- cv.glmnet(x=X.train, y=Y.train, family = "binomial", alpha = 1, nfolds = 10)
+plot(cv.lasso)
+```
+
+Error associated with model with lambda=1se and coefficients of model
+```{r message = FALSE, warning = FALSE}
+cv.lasso$lambda.1se
+
+coef(lasso.fit, s=cv.lasso$lambda.1se)
+```
+
+### Final logistic model for GLM
+
+For our final model, we select the following variables:
+
+* chk_acct
+* duration
+* credit_his
+* amount
+* saving_acct
+* installment_rate
+* other_install
+
+```{r message = FALSE, warning = FALSE}
+credit.glm.final <- glm(response ~ chk_acct + duration + credit_his + amount + saving_acct + other_install + installment_rate, family = binomial, german_credit.train)
+
+summary(credit.glm.final)
+```
+
+## Model Evaluation
+
+### In-sample misclassification rate
+
+Keeping cutoff probability as 0.1667, the misclassification rate is:
+
+```{r message = FALSE, warning = FALSE}
+prob.glm1.insample <- predict(credit.glm.final, type = "response")
+predicted.glm1.insample <- prob.glm1.insample > 0.1667
+predicted.glm1.insample <- as.numeric(predicted.glm1.insample)
+mean(ifelse(german_credit.train$response != predicted.glm1.insample, 1, 0))
+```
+
+### Confusion Matrix
+
+Checking for the predictions and seeing the False Positive and False negative values from the below confusion matrix:
+
+```{r message = FALSE, warning = FALSE}
+table(german_credit.train$response, predicted.glm1.insample, dnn = c("Truth", "Predicted"))
+```
+
+### ROC Plot
+
+ROC Plot is plotted below and the AUC is 0.7896875
+```{r message = FALSE, warning = FALSE}
+roc.plot(german_credit.train$response == "1", prob.glm1.insample)
+roc.plot(german_credit.train$response == "1", prob.glm1.insample)$roc.vol$Area
+```
+
+### Out of sample misclassification rate and AUC score
+
+We get a misclassification rate of 0.395, and AUC of 0.7734524
+```{r message = FALSE, warning = FALSE}
+prob.glm1.outsample <- predict(credit.glm.final, german_credit.test, type = "response")
+predicted.glm1.outsample <- prob.glm1.outsample > 0.1667
+predicted.glm1.outsample <- as.numeric(predicted.glm1.outsample)
+table(german_credit.test$response, predicted.glm1.outsample, dnn = c("Truth", "Predicted"))
+
+mean(ifelse(german_credit.test$response != predicted.glm1.outsample, 1, 0))
+
+roc.plot(german_credit.test$response == "1", prob.glm1.outsample)
+roc.plot(german_credit.test$response == "1", prob.glm1.outsample)$roc.vol$Area
+```
+
+### Asymmetric misclassification rate giving more penalty for false positives
+
+In cases where we need to penalize the False Negative more than False Positive, we use a 5:1 penalty for misclassification and see an error rate of 0.535
+```{r message = FALSE, warning = FALSE}
+cost1 <- function(r, pi) {
+  weight1 = 5
+  weight0 = 1
+  c1 = (r == 1) & (pi < 0.17)  #logical vector - true if actual 1 but predict 0
+  c0 = (r == 0) & (pi > 0.17)  #logical vecotr - true if actual 0 but predict 1
+  return(mean(weight1 * c1 + weight0 * c0))
+}
+
+cost1(german_credit.test$response,predicted.glm1.outsample)
+```
